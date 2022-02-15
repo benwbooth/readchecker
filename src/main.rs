@@ -13,14 +13,9 @@ fn main() -> Result<()> {
         eprintln!("Usage: {} to_check.fastq ... < input.fastq > missing_reads.fastq", args[0]);
         std::process::exit(1);
     }
-    let mut record = fastq::Record::new();
     let mut hashset = HashSet::new();
-    let mut reader2 = fastq::Reader::new(io::stdin());
-    let mut writer = fastq::Writer::new(io::stdout());
-    let mut total = 0u64;
-    let mut notfound = 0u64;
-
     for arg in &args[1..args.len()] {
+        let mut record = fastq::Record::new();
         let mut reader = fastq::Reader::from_file(&arg)?;
         reader.read(&mut record)?;
         while !record.is_empty() {
@@ -29,6 +24,11 @@ fn main() -> Result<()> {
             reader.read(&mut record)?;
         }
     }
+
+    let mut total = 0u64;
+    let mut notfound = 0u64;
+    let mut reader2 = fastq::Reader::new(io::stdin());
+    let mut writer = fastq::Writer::new(io::stdout());
     let mut record = fastq::Record::new();
     reader2.read(&mut record)?;
     while !record.is_empty() {
