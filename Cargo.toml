@@ -1,0 +1,10 @@
+[package]
+name = "readchecker"
+version = "0.1.0"
+authors = ["Ben Booth <benwbooth@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+sha2 = "*"
+bio = "*"
+anyhow = "*"
