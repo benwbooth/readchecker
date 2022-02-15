@@ -18,6 +18,8 @@ fn main() -> Result<()> {
     let mut reader = fastq::Reader::from_file(&args[1])?;
     let mut reader2 = fastq::Reader::from_file(&args[2])?;
     let mut writer = fastq::Writer::new(io::stdout());
+    let mut total = 0u64;
+    let mut notfound = 0u64;
 
     reader.read(&mut record)?;
     while !record.is_empty() {
@@ -27,11 +29,14 @@ fn main() -> Result<()> {
     }
     reader2.read(&mut record)?;
     while !record.is_empty() {
+        total += 1;
         let hash = Sha256::new().chain_update(record.seq()).finalize();
         if !hashset.contains(&hash) {
             writer.write_record(&record)?;
+            notfound += 1;
         }
         reader2.read(&mut record)?;
     }
+    eprintln!("Missing {} of {} reads", notfound, total);
     Ok(())
 }
