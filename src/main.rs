@@ -27,6 +27,7 @@ fn main() -> Result<()> {
         hashset.insert(hash);
         reader.read(&mut record)?;
     }
+    let mut record = fastq::Record::new();
     reader2.read(&mut record)?;
     while !record.is_empty() {
         total += 1;
