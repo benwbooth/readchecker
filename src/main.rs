@@ -15,7 +15,7 @@ use flate2::read::GzDecoder;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
+    if args.len() != 3 {
         eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list > missing_reads.fastq", args[0]);
         std::process::exit(1);
     }
@@ -32,18 +32,19 @@ fn main() -> Result<()> {
     let mut bytes = [0u8; 32];
     let mut hashmap = HashMap::<[u8; 32], Vec<usize>>::new();
     for (i, to_index) in to_index_fastq.iter().enumerate() {
+        eprintln!("Indexing file {to_index}");
         let mut reader: fastq::Reader<BufReader<Box<dyn Read>>> = if to_index.ends_with(".gz") {
             fastq::Reader::new(Box::new(GzDecoder::new(File::open(to_index)?)))
         } else {
             fastq::Reader::new(Box::new(File::open(to_index)?))
         };
         let mut record = fastq::Record::new();
-        reader.read(&mut record)?;
+        while reader.read(&mut record).is_err() { }
         while !record.is_empty() {
             seed.reset();
             seed.update(record.seq());
             seed.write(&mut bytes)?;
-            match hashmap.get_mut(&bytes[..]) {
+            match hashmap.get_mut(&bytes) {
                 Some(vec) => vec.push(i),
                 None => {
                     let mut vec = Vec::new();
@@ -51,7 +52,7 @@ fn main() -> Result<()> {
                     hashmap.insert(bytes.clone(), vec);
                 }
             }
-            reader.read(&mut record)?;
+            while reader.read(&mut record).is_err() { }
         }
     }
 
@@ -72,13 +73,13 @@ fn main() -> Result<()> {
             seed.reset();
             seed.update(record.seq());
             seed.write(&mut bytes)?;
-            match hashmap.get(&bytes[..]) {
+            match hashmap.get(&bytes) {
                 Some(vec) => {
                     fileset.extend(vec);
                 },
                 None => {
                     let id = record.id();
-                    eprintln!("{file}\t{id}\tmissing");
+                    eprintln!("{file}: read {id} not found in index");
                 }
             }
             while reader.read(&mut record).is_err() { }
@@ -88,7 +89,7 @@ fn main() -> Result<()> {
             found_in.push(to_index_fastq[*i].clone());
         }
         let found_in_str = found_in.join(",");
-        println!("{file}\t{found_in_str}")
+        println!("{file}\t{found_in_str}");
     }
     Ok(())
 }
