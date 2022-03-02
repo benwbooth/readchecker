@@ -838,6 +838,7 @@ dependencies = [
  "byte-unit",
  "dashmap",
  "flate2",
+ "generic-array",
  "procfs",
  "rayon",
  "sha2",
