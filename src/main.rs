@@ -15,6 +15,8 @@ use flate2::read::GzDecoder;
 use byte_unit::Byte;
 use rayon::prelude::*;
 use dashmap::DashMap;
+use atomic_counter::AtomicCounter;
+use atomic_counter::RelaxedCounter;
 
 fn main() -> Result<()> {
     let threads = match std::env::var("THREADS") {
@@ -42,12 +44,14 @@ fn main() -> Result<()> {
     }
 
     let seqsha2fileidxset = DashMap::<[u8; 32], BTreeSet<u32>>::new();
+    let counter = RelaxedCounter::new(0usize);
     let result: Result<(), anyhow::Error> = to_index_fastq.par_iter().enumerate().try_for_each(|(i, to_index)| {
         let mut seed = Sha256::new();
         let mut bytes = [0u8; 32];
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
-        eprintln!("Indexing file {to_index} ({ip1}/{to_index_length}), memory usage={memusage}", 
-            ip1=i+1, 
+        let c = counter.inc();
+        eprintln!("Indexing file {to_index} ({c}/{to_index_length}), memory usage={memusage}", 
+            c=c+1, 
             to_index_length=to_index_fastq.len(), 
             memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
         let mut reader: fastq::Reader<BufReader<Box<dyn Read>>> = if to_index.ends_with(".gz") {
@@ -87,10 +91,12 @@ fn main() -> Result<()> {
         query_fastq.push(file);
         line.clear();
     }
-    let result: Result<(), anyhow::Error> = query_fastq.par_iter().enumerate().try_for_each(|(i, file)| {
+    let counter = RelaxedCounter::new(0usize);
+    let result: Result<(), anyhow::Error> = query_fastq.par_iter().try_for_each(|file| {
+        let c = counter.inc();
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
-        eprintln!("Processing file {file} ({ip1}/{query_fastq_length}), memory usage={memusage}", 
-            ip1=i+1, 
+        eprintln!("Processing file {file} ({c}/{query_fastq_length}), memory usage={memusage}", 
+            c=c+1,
             query_fastq_length=query_fastq.len(), 
             memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
         let mut seed = Sha256::new();
