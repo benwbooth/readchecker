@@ -12,8 +12,11 @@ use bio::io::fastq;
 use bio::io::fastq::FastqRead;
 use anyhow::Result;
 use flate2::read::GzDecoder;
+use byte_unit::Byte;
 
 fn main() -> Result<()> {
+    let bytes_per_page = procfs::page_size()?;
+
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list > missing_reads.fastq", args[0]);
@@ -30,9 +33,13 @@ fn main() -> Result<()> {
 
     let mut seed = Sha256::new();
     let mut bytes = [0u8; 32];
-    let mut hashmap = HashMap::<[u8; 32], Vec<usize>>::new();
+    let mut hashmap = HashMap::<[u8; 32], Vec<u32>>::new();
     for (i, to_index) in to_index_fastq.iter().enumerate() {
-        eprintln!("Indexing file {to_index}");
+        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
+        eprintln!("Indexing file {to_index} ({ip1}/{to_index_length}), memory usage={memusage}", 
+        ip1=i+1, 
+        to_index_length=to_index.len(), 
+        memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
         let mut reader: fastq::Reader<BufReader<Box<dyn Read>>> = if to_index.ends_with(".gz") {
             fastq::Reader::new(Box::new(GzDecoder::new(File::open(to_index)?)))
         } else {
@@ -45,10 +52,10 @@ fn main() -> Result<()> {
             seed.update(record.seq());
             seed.write(&mut bytes)?;
             match hashmap.get_mut(&bytes) {
-                Some(vec) => vec.push(i),
+                Some(vec) => vec.push(i as u32),
                 None => {
                     let mut vec = Vec::new();
-                    vec.push(i);
+                    vec.push(i as u32);
                     hashmap.insert(bytes.clone(), vec);
                 }
             }
@@ -66,7 +73,7 @@ fn main() -> Result<()> {
         } else {
             fastq::Reader::new(Box::new(File::open(file)?))
         };
-        let mut fileset = HashSet::<usize>::new();
+        let mut fileset = HashSet::<u32>::new();
         let mut record = fastq::Record::new();
         while reader.read(&mut record).is_err() { }
         while !record.is_empty() {
@@ -86,7 +93,7 @@ fn main() -> Result<()> {
         }
         let mut found_in = Vec::new();
         for i in fileset.iter() {
-            found_in.push(to_index_fastq[*i].clone());
+            found_in.push(to_index_fastq[*i as usize].clone());
         }
         let found_in_str = found_in.join(",");
         println!("{file}\t{found_in_str}");
