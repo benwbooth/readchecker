@@ -112,7 +112,7 @@ fn main() -> Result<()> {
                     match fileidxset2count.get_mut(&*fileidxset) {
                         Some(count) => *count += 1,
                         _ => {
-                            fileidxset2count.insert((*fileidxset).clone(), 0usize);
+                            fileidxset2count.insert((*fileidxset).clone(), 1usize);
                             ()
                         },
                     };
