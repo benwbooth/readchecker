@@ -57,8 +57,7 @@ fn main() -> Result<()> {
         let mut reader = fastq::Reader::new(br);
 
         let mut record = fastq::Record::new();
-        //while reader.read(&mut record).is_err() { }
-        reader.read(&mut record)?;
+        while reader.read(&mut record).is_err() { }
         while !record.is_empty() {
             let mut seed = Sha256::new();
             seed.update(record.seq());
@@ -75,8 +74,7 @@ fn main() -> Result<()> {
                     seqsha2fileidxset.insert(bytes, fileidxset);
                 }
             }
-            //while reader.read(&mut record).is_err() { }
-            reader.read(&mut record)?;
+            while reader.read(&mut record).is_err() { }
         }
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
         let c = counter.inc();
