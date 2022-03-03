@@ -18,9 +18,16 @@ use atomic_counter::AtomicCounter;
 use atomic_counter::RelaxedCounter;
 use generic_array::GenericArray;
 use generic_array::typenum::U32;
+use csv::WriterBuilder;
 
 
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list >found_reads.list 2> missing_reads.list", args[0]);
+        std::process::exit(1);
+    }
+
     let threads = match std::env::var("THREADS") {
         Ok(t) => t.parse::<usize>()?,
         _ => 15usize,
@@ -28,12 +35,6 @@ fn main() -> Result<()> {
     rayon::ThreadPoolBuilder::new().num_threads(threads).build_global()?;
 
     let bytes_per_page = procfs::page_size()?;
-
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list >found_reads.list 2> missing_reads.list", args[0]);
-        std::process::exit(1);
-    }
 
     let to_index_fastq_files = File::open(&args[1])?;
     let mut to_index_fastq_files_br = BufReader::new(to_index_fastq_files);
@@ -84,7 +85,7 @@ fn main() -> Result<()> {
     });
     result?;
 
-    let query_fastq_files = File::open(&args[1])?;
+    let query_fastq_files = File::open(&args[2])?;
     let mut query_fastq_files_br = BufReader::new(query_fastq_files);
     let mut query_fastq = Vec::<String>::new();
     line.clear();
@@ -95,6 +96,7 @@ fn main() -> Result<()> {
     }
     let counter = RelaxedCounter::new(0usize);
     let result: Result<(), anyhow::Error> = query_fastq.par_iter().try_for_each(|file| {
+        let mut wtr = WriterBuilder::new().delimiter(b'\t').from_writer(std::io::stdout());
         let c = counter.inc();
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
         eprintln!("Processing file {file} ({c}/{query_fastq_length}), memory usage={memusage}", 
@@ -135,7 +137,10 @@ fn main() -> Result<()> {
             for i in fileidxset.iter() {
                 files.push(to_index_fastq[*i as usize].clone());
             }
-            println!("{file}\t{files_str}\t{count}", files_str=files.join(","));
+            let mut file_wtr = WriterBuilder::new().from_writer(vec![]);
+            file_wtr.write_record(files)?;
+            let files_str= String::from_utf8(file_wtr.into_inner()?)?;
+            wtr.write_record([file, &files_str, &count.to_string()])?
         }
         Ok(())
     });

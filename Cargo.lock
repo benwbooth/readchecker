@@ -836,6 +836,7 @@ dependencies = [
  "atomic-counter",
  "bio",
  "byte-unit",
+ "csv",
  "dashmap",
  "flate2",
  "generic-array",
