@@ -57,7 +57,12 @@ fn main() -> Result<()> {
         let mut reader = fastq::Reader::new(br);
 
         let mut record = fastq::Record::new();
-        while reader.read(&mut record).is_err() { }
+        let mut record_num = 0usize;
+        record_num += 1;
+        while let Err(e) = reader.read(&mut record) { 
+            eprintln!("Could not read file {to_index} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
+            record_num += 1;
+        }
         while !record.is_empty() {
             let mut seed = Sha256::new();
             seed.update(record.seq());
@@ -74,7 +79,11 @@ fn main() -> Result<()> {
                     seqsha2fileidxset.insert(bytes, fileidxset);
                 }
             }
-            while reader.read(&mut record).is_err() { }
+            record_num += 1;
+            while let Err(e) = reader.read(&mut record) { 
+                eprintln!("Could not read file {to_index} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
+                record_num += 1;
+            }
         }
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
         let c = counter.inc();
@@ -115,7 +124,12 @@ fn main() -> Result<()> {
 
         let mut fileidxset2count = BTreeMap::<BTreeSet<u32>,usize>::new();
         let mut record = fastq::Record::new();
-        while reader.read(&mut record).is_err() { }
+        let mut record_num = 0usize;
+        record_num += 1;
+        while let Err(e) = reader.read(&mut record) { 
+            eprintln!("Could not parse fastq file {file} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
+            record_num += 1;
+        }
         while !record.is_empty() {
             let mut seed = Sha256::new();
             seed.update(record.seq());
@@ -135,7 +149,11 @@ fn main() -> Result<()> {
                     eprintln!("{file}: read {id} not found in index");
                 }
             }
-            while reader.read(&mut record).is_err() { }
+            record_num += 1;
+            while let Err(e) = reader.read(&mut record) { 
+                eprintln!("Could not parse fastq file {file} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
+                record_num += 1;
+            }
         }
         for (fileidxset, count) in fileidxset2count.iter() {
             let mut files = Vec::new();
