@@ -10,7 +10,7 @@ use sha2::digest::Digest;
 use bio::io::fastq;
 use bio::io::fastq::FastqRead;
 use anyhow::Result;
-use flate2::read::GzDecoder;
+use flate2::bufread::MultiGzDecoder;
 use byte_unit::Byte;
 use rayon::prelude::*;
 use dashmap::DashMap;
@@ -19,7 +19,6 @@ use atomic_counter::RelaxedCounter;
 use generic_array::GenericArray;
 use generic_array::typenum::U32;
 use csv::WriterBuilder;
-
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -49,20 +48,17 @@ fn main() -> Result<()> {
     let seqsha2fileidxset = DashMap::<GenericArray<u8, U32>, BTreeSet<u32>>::new();
     let counter = RelaxedCounter::new(0usize);
     let result: Result<(), anyhow::Error> = to_index_fastq.par_iter().enumerate().try_for_each(|(i, to_index)| {
-        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
-        let c = counter.inc();
-        eprintln!("Indexing file {to_index} ({c}/{to_index_length}), total reads={reads}, memory usage={memusage}", 
-            c=c+1, 
-            to_index_length=to_index_fastq.len(), 
-            reads=seqsha2fileidxset.len(),
-            memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
-        let mut reader: fastq::Reader<BufReader<Box<dyn Read>>> = if to_index.ends_with(".gz") {
-            fastq::Reader::new(Box::new(GzDecoder::new(File::open(to_index)?)))
+
+        let br: Box<dyn Read> = if to_index.ends_with(".gz") {
+            Box::new(MultiGzDecoder::new(BufReader::new(File::open(to_index)?)))
         } else {
-            fastq::Reader::new(Box::new(File::open(to_index)?))
+            Box::new(File::open(to_index)?)
         };
+        let mut reader = fastq::Reader::new(br);
+
         let mut record = fastq::Record::new();
-        while reader.read(&mut record).is_err() { }
+        //while reader.read(&mut record).is_err() { }
+        reader.read(&mut record)?;
         while !record.is_empty() {
             let mut seed = Sha256::new();
             seed.update(record.seq());
@@ -79,8 +75,16 @@ fn main() -> Result<()> {
                     seqsha2fileidxset.insert(bytes, fileidxset);
                 }
             }
-            while reader.read(&mut record).is_err() { }
+            //while reader.read(&mut record).is_err() { }
+            reader.read(&mut record)?;
         }
+        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
+        let c = counter.inc();
+        eprintln!("Indexing file {to_index} ({c}/{to_index_length}), total reads={reads}, memory usage={memusage}", 
+            c=c+1, 
+            to_index_length=to_index_fastq.len(), 
+            reads=seqsha2fileidxset.len(),
+            memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
         Ok(())
     });
     result?;
@@ -103,11 +107,14 @@ fn main() -> Result<()> {
             c=c+1,
             query_fastq_length=query_fastq.len(), 
             memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
-        let mut reader: fastq::Reader<BufReader<Box<dyn Read>>> = if file.ends_with(".gz") {
-            fastq::Reader::new(Box::new(GzDecoder::new(File::open(file)?)))
+
+        let br: Box<dyn Read> = if file.ends_with(".gz") {
+            Box::new(MultiGzDecoder::new(BufReader::new(File::open(file)?)))
         } else {
-            fastq::Reader::new(Box::new(File::open(file)?))
+            Box::new(File::open(file)?)
         };
+        let mut reader = fastq::Reader::new(br);
+
         let mut fileidxset2count = BTreeMap::<BTreeSet<u32>,usize>::new();
         let mut record = fastq::Record::new();
         while reader.read(&mut record).is_err() { }
