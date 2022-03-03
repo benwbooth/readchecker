@@ -140,7 +140,7 @@ fn main() -> Result<()> {
             let mut file_wtr = WriterBuilder::new().from_writer(vec![]);
             file_wtr.write_record(files)?;
             let files_str= String::from_utf8(file_wtr.into_inner()?)?;
-            wtr.write_record([file, &files_str, &count.to_string()])?
+            wtr.write_record([file, files_str.trim_end_matches(['\r','\n']), &count.to_string()])?
         }
         Ok(())
     });
