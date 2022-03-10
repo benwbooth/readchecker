@@ -5,8 +5,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::BufRead;
 use std::io::Read;
-use sha2::Sha256;
-use sha2::digest::Digest;
+//use sha2::Sha256;
+//use sha2::digest::Digest;
+use sha1::Sha1;
+use sha1::digest::Digest;
 use bio::io::fastq;
 use bio::io::fastq::FastqRead;
 use anyhow::Result;
@@ -18,7 +20,7 @@ use dashmap::DashMap;
 use atomic_counter::AtomicCounter;
 use atomic_counter::RelaxedCounter;
 use generic_array::GenericArray;
-use generic_array::typenum::U32;
+use generic_array::typenum::U20;
 use csv::WriterBuilder;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -26,7 +28,7 @@ use std::sync::Mutex;
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 5 {
-        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list found_reads_out.list missing_reads_out.fastq", args[0]);
+        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list found_reads_out.tsv missing_reads_out.fastq", args[0]);
         std::process::exit(1);
     }
     let found_reads = File::create(&args[3])?;
@@ -52,7 +54,7 @@ fn main() -> Result<()> {
         line.clear();
     }
 
-    let seqsha2fileidxset = DashMap::<GenericArray<u8, U32>, BTreeSet<u32>>::new();
+    let seqsha2fileidxset = DashMap::<GenericArray<u8, U20>, BTreeSet<u32>>::new();
     let counter = RelaxedCounter::new(0usize);
     let result: Result<(), anyhow::Error> = to_index_fastq.par_iter().enumerate().try_for_each(|(i, to_index)| {
 
@@ -71,7 +73,7 @@ fn main() -> Result<()> {
             record_num += 1;
         }
         while !record.is_empty() {
-            let mut seed = Sha256::new();
+            let mut seed = Sha1::new();
             seed.update(record.seq());
             let bytes  = seed.finalize();
             //eprintln!("seq={seq}, bytes={bytes:?}", seq=std::str::from_utf8(record.seq())?);
@@ -137,7 +139,7 @@ fn main() -> Result<()> {
             record_num += 1;
         }
         while !record.is_empty() {
-            let mut seed = Sha256::new();
+            let mut seed = Sha1::new();
             seed.update(record.seq());
             let bytes  = seed.finalize();
             match seqsha2fileidxset.get(&bytes) {

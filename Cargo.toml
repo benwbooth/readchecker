@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 sha2 = "*"
+sha1 = "*"
 bio = "*"
 anyhow = "*"
 flate2 = "*"
