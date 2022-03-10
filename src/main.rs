@@ -24,8 +24,21 @@ use generic_array::typenum::U20;
 use csv::WriterBuilder;
 use std::sync::Arc;
 use std::sync::Mutex;
+use bio::alphabets;
+use bio::alphabets::RankTransform;
+use fnv::FnvHashSet;
+
 
 fn main() -> Result<()> {
+    // length of k-mer to use
+    // k must be less than or equal to 12
+    let k = 4;
+    // complexity threshold ([0:1], 0 = most stringent, 1 = least
+    let threshold = 0.55;
+
+    let alphabet = alphabets::dna::iupac_alphabet();
+    let rank = RankTransform::new(&alphabet);
+
     let args: Vec<String> = env::args().collect();
     if args.len() != 5 {
         eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list found_reads_out.tsv missing_reads_out.fastq", args[0]);
@@ -139,6 +152,25 @@ fn main() -> Result<()> {
             record_num += 1;
         }
         while !record.is_empty() {
+            // filter out low complexity reads
+            if record.seq().len() >= 64 {
+                let mut found_good_sequence = false;
+                for offset in 0..(record.seq().len() / 50) {
+                    let subseq = &record.seq()[(offset*50)..std::cmp::min(((offset+1)*50)+50, record.seq().len())];
+                    if subseq.len() >= 64 {
+                        let kmers = rank.qgrams(k, subseq)
+                            .collect::<FnvHashSet<usize>>()
+                            .len();
+                        let sequence_complexity = kmers as f64 / subseq.len() as f64;
+                        if sequence_complexity >= threshold { 
+                            found_good_sequence = true;
+                            break 
+                        }
+                    }
+                }
+                if !found_good_sequence { continue }
+            }
+
             let mut seed = Sha1::new();
             seed.update(record.seq());
             let bytes  = seed.finalize();
