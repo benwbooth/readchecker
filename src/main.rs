@@ -10,6 +10,7 @@ use sha2::digest::Digest;
 use bio::io::fastq;
 use bio::io::fastq::FastqRead;
 use anyhow::Result;
+use anyhow::bail;
 use flate2::bufread::MultiGzDecoder;
 use byte_unit::Byte;
 use rayon::prelude::*;
@@ -19,13 +20,19 @@ use atomic_counter::RelaxedCounter;
 use generic_array::GenericArray;
 use generic_array::typenum::U32;
 use csv::WriterBuilder;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list >found_reads.list 2> missing_reads.list", args[0]);
+    if args.len() != 5 {
+        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list found_reads_out.list missing_reads_out.fastq", args[0]);
         std::process::exit(1);
     }
+    let found_reads = File::create(&args[3])?;
+    let fr = Arc::new(Mutex::new(WriterBuilder::new().delimiter(b'\t').from_writer(found_reads)));
+
+    let missing_reads = Arc::new(Mutex::new(fastq::Writer::to_file(&args[4])?));
 
     let threads = match std::env::var("THREADS") {
         Ok(t) => t.parse::<usize>()?,
@@ -106,8 +113,7 @@ fn main() -> Result<()> {
         line.clear();
     }
     let counter = RelaxedCounter::new(0usize);
-    let result: Result<(), anyhow::Error> = query_fastq.par_iter().try_for_each(|file| {
-        let mut wtr = WriterBuilder::new().delimiter(b'\t').from_writer(std::io::stdout());
+    let result: Result<(), anyhow::Error> = query_fastq.par_iter().try_for_each_with((fr, missing_reads), |(fr, missing_reads), file| {
         let c = counter.inc();
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
         eprintln!("Processing file {file} ({c}/{query_fastq_length}), memory usage={memusage}", 
@@ -147,6 +153,8 @@ fn main() -> Result<()> {
                 None => {
                     let id = record.id();
                     eprintln!("{file}: read {id} not found in index");
+                    let mut mr = missing_reads.lock().or_else(|_| bail!("Could not write to missing_reads file {f}!", f=args[4]))?;
+                    (*mr).write_record(&record)?;
                 }
             }
             record_num += 1;
@@ -163,7 +171,8 @@ fn main() -> Result<()> {
             let mut file_wtr = WriterBuilder::new().from_writer(vec![]);
             file_wtr.write_record(files)?;
             let files_str= String::from_utf8(file_wtr.into_inner()?)?;
-            wtr.write_record([file, files_str.trim_end_matches(['\r','\n']), &count.to_string()])?
+            let mut fr = fr.lock().or_else(|_| bail!("Could not write to found_reads file {f}!", f=args[3]))?;
+            (*fr).write_record([file, files_str.trim_end_matches(['\r','\n']), &count.to_string()])?
         }
         Ok(())
     });
