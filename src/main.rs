@@ -1,5 +1,5 @@
 use std::env;
-use std::collections::BTreeSet;
+use sorted_vec::SortedSet;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
 
     let threads = match std::env::var("THREADS") {
         Ok(t) => t.parse::<usize>()?,
-        _ => 15usize,
+        _ => num_cpus::get(),
     };
     rayon::ThreadPoolBuilder::new().num_threads(threads).build_global()?;
 
@@ -67,9 +67,9 @@ fn main() -> Result<()> {
         line.clear();
     }
 
-    let seqsha2fileidxset = DashMap::<GenericArray<u8, U20>, BTreeSet<u32>>::new();
+    let seqsha2fileidxset = DashMap::<GenericArray<u8, U20>, SortedSet<u32>>::new();
     let counter = RelaxedCounter::new(0usize);
-    let result: Result<(), anyhow::Error> = to_index_fastq.par_iter().enumerate().try_for_each(|(i, to_index)| {
+    let result: Result<(), anyhow::Error> = to_index_fastq.par_iter().with_max_len(1).enumerate().try_for_each(|(i, to_index)| {
 
         let br: Box<dyn Read> = if to_index.ends_with(".gz") {
             Box::new(MultiGzDecoder::new(BufReader::new(File::open(to_index)?)))
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
                     ()
                 },
                 _ => {
-                    let mut fileidxset = BTreeSet::new();
+                    let mut fileidxset = SortedSet::new();
                     fileidxset.insert(i as u32);
                     seqsha2fileidxset.insert(bytes, fileidxset);
                 }
@@ -128,7 +128,7 @@ fn main() -> Result<()> {
         line.clear();
     }
     let counter = RelaxedCounter::new(0usize);
-    let result: Result<(), anyhow::Error> = query_fastq.par_iter().try_for_each_with((fr, missing_reads), |(fr, missing_reads), file| {
+    let result: Result<(), anyhow::Error> = query_fastq.par_iter().with_max_len(1).try_for_each_with((fr, missing_reads), |(fr, missing_reads), file| {
         let c = counter.inc();
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
         eprintln!("Processing file {file} ({c}/{query_fastq_length}), memory usage={memusage}", 
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
         };
         let mut reader = fastq::Reader::new(br);
 
-        let mut fileidxset2count = BTreeMap::<BTreeSet<u32>,usize>::new();
+        let mut fileidxset2count = BTreeMap::<SortedSet<u32>,usize>::new();
         let mut record = fastq::Record::new();
         let mut record_num = 0usize;
         record_num += 1;
