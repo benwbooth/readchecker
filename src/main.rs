@@ -178,12 +178,6 @@ fn main() -> Result<()> {
                                 unexpected.push(cat.to_string());
                             }
                         }
-                        else {
-                            match category2count.get_mut("") {
-                                Some(c2c) => *c2c += 1,
-                                None => { category2count.insert("".to_string(), 1); },
-                            }
-                        }
                     }
                     if !expected.is_empty() {
                         let selected = expected.choose_multiple(&mut rand::thread_rng(), 1).collect::<Vec<&String>>()[0];
@@ -197,6 +191,16 @@ fn main() -> Result<()> {
                         match category2count.get_mut(selected.as_str()) {
                             Some(c2c) => *c2c += 1,
                             None => { category2count.insert(selected.to_string(), 1); }
+                        }
+                    }
+                    else {
+                        let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
+                        file_wtr.write_record(fileidxset.iter().map(|idx| to_index_fastq[*idx as usize].to_string()).collect::<Vec<_>>())?;
+                        let files_str= String::from_utf8(file_wtr.into_inner()?)?;
+                        eprintln!("Read {read_id} matches uncategorized file(s): {files_str}", read_id=record.id());
+                        match category2count.get_mut("") {
+                            Some(c2c) => *c2c += 1,
+                            None => { category2count.insert("".to_string(), 1); },
                         }
                     }
                 },
