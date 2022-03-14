@@ -3,10 +3,7 @@ use sorted_vec::SortedSet;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::io::BufRead;
 use std::io::Read;
-//use sha2::Sha256;
-//use sha2::digest::Digest;
 use sha1::Sha1;
 use sha1::digest::Digest;
 use bio::io::fastq;
@@ -21,30 +18,21 @@ use atomic_counter::AtomicCounter;
 use atomic_counter::RelaxedCounter;
 use generic_array::GenericArray;
 use generic_array::typenum::U20;
-use csv::WriterBuilder;
 use std::sync::Arc;
 use std::sync::Mutex;
-// use bio::alphabets;
-// use bio::alphabets::RankTransform;
-// use fnv::FnvHashSet;
-
+use rand::seq::SliceRandom;
 
 fn main() -> Result<()> {
-    // length of k-mer to use
-    // k must be less than or equal to 12
-    // let k = 4;
-    // complexity threshold ([0:1], 0 = most stringent, 1 = least
-    // let threshold = 0.55;
-    // let alphabet = alphabets::dna::iupac_alphabet();
-    // let rank = RankTransform::new(&alphabet);
-
     let args: Vec<String> = env::args().collect();
     if args.len() != 5 {
-        eprintln!("Usage: {} to_index_fastq_files.list query_fastq_files.list found_reads_out.tsv missing_reads_out.fastq", args[0]);
+        eprintln!("Usage: {} to_index_fastq_files.tsv query_fastq_files.tsv found_reads_out.tsv missing_reads_out.fastq", args[0]);
         std::process::exit(1);
     }
     let found_reads = File::create(&args[3])?;
-    let fr = Arc::new(Mutex::new(WriterBuilder::new().delimiter(b'\t').from_writer(found_reads)));
+    let fr = Arc::new(Mutex::new(csv::WriterBuilder::new().
+        delimiter(b'\t').
+        has_headers(false).
+        from_writer(found_reads)));
 
     let missing_reads = Arc::new(Mutex::new(fastq::Writer::to_file(&args[4])?));
 
@@ -56,14 +44,18 @@ fn main() -> Result<()> {
 
     let bytes_per_page = procfs::page_size()?;
 
-    let to_index_fastq_files = File::open(&args[1])?;
-    let mut to_index_fastq_files_br = BufReader::new(to_index_fastq_files);
-    let mut line = String::new();
+    let mut to_index_fastq_reader = csv::ReaderBuilder::new().
+        delimiter(b'\t').
+        has_headers(false).
+        from_path(&args[1])?;
     let mut to_index_fastq = Vec::<String>::new();
-    while to_index_fastq_files_br.read_line(&mut line)? > 0 {
-        let file = line.trim_end_matches(['\r','\n']).to_string();
-        to_index_fastq.push(file);
-        line.clear();
+    let file2category = DashMap::<usize,String>::new();
+    for (i, record) in to_index_fastq_reader.records().enumerate() {
+        let record = record?;
+        let file = &record[0];
+        let category= if record.len() > 1 { &record[1] } else { "" };
+        to_index_fastq.push(file.to_string());
+        file2category.insert(i, category.to_string());
     }
 
     let seqsha2fileidxset = DashMap::<GenericArray<u8, U20>, SortedSet<u32>>::new();
@@ -85,36 +77,17 @@ fn main() -> Result<()> {
             record_num += 1;
         }
         while !record.is_empty() {
-            // filter out low complexity reads
-            // if record.seq().len() >= 64 {
-            //     let mut found_good_sequence = false;
-            //     for offset in 0..(record.seq().len() / 50) {
-            //         let subseq = &record.seq()[(offset*50)..std::cmp::min(((offset+1)*50)+50, record.seq().len())];
-            //         if subseq.len() >= 64 {
-            //             let kmers = rank.qgrams(k, subseq)
-            //                 .collect::<FnvHashSet<usize>>()
-            //                 .len();
-            //             let sequence_complexity = kmers as f64 / subseq.len() as f64;
-            //             if sequence_complexity >= threshold { 
-            //                 found_good_sequence = true;
-            //                 break 
-            //             }
-            //         }
-            //     }
-            //     if !found_good_sequence { continue }
-            // }
             let mut seed = Sha1::new();
             seed.update(record.seq());
             let bytes  = seed.finalize();
-            //eprintln!("seq={seq}, bytes={bytes:?}", seq=std::str::from_utf8(record.seq())?);
             match seqsha2fileidxset.get_mut(&bytes) {
                 Some(mut fileidxset) => {
-                    (*fileidxset).insert(i as u32);
+                    (*fileidxset).insert(i.try_into()?);
                     ()
                 },
                 _ => {
                     let mut fileidxset = SortedSet::new();
-                    fileidxset.insert(i as u32);
+                    fileidxset.insert(i.try_into()?);
                     seqsha2fileidxset.insert(bytes, fileidxset);
                 }
             }
@@ -124,34 +97,48 @@ fn main() -> Result<()> {
                 record_num += 1;
             }
         }
-        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
+        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss * bytes_per_page;
         let c = counter.inc();
         eprintln!("Indexing file {to_index} ({c}/{to_index_length}), total reads={reads}, memory usage={memusage}", 
             c=c+1, 
             to_index_length=to_index_fastq.len(), 
             reads=seqsha2fileidxset.len(),
-            memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
+            memusage=Byte::from_bytes(mem_usage_bytes.try_into()?).get_appropriate_unit(false).to_string());
         Ok(())
     });
     result?;
 
-    let query_fastq_files = File::open(&args[2])?;
-    let mut query_fastq_files_br = BufReader::new(query_fastq_files);
     let mut query_fastq = Vec::<String>::new();
-    line.clear();
-    while query_fastq_files_br.read_line(&mut line)? > 0 {
-        let file = line.trim_end_matches(['\r','\n']).to_string();
-        query_fastq.push(file);
-        line.clear();
+    let mut query_fastq_reader = csv::ReaderBuilder::new().
+        delimiter(b'\t').
+        has_headers(false).
+        from_path(&args[2])?;
+    let expected_category = DashMap::<usize,SortedSet<String>>::new();
+    for (i, record) in query_fastq_reader.records().enumerate() {
+        let record = record?;
+        let file = &record[0];
+        let categories = &record[1];
+
+        let mut rdr = csv::ReaderBuilder::new().from_reader(categories.as_bytes());
+        let cat_records = rdr.records().collect::<std::result::Result<Vec<csv::StringRecord>,csv::Error>>()?;
+        for cat_record in cat_records {
+            for cat in cat_record.iter() {
+                expected_category.entry(i).or_insert_with(|| SortedSet::new()).insert(cat.to_string());
+            }
+        }
+        query_fastq.push(file.to_string());
     }
     let counter = RelaxedCounter::new(0usize);
-    let result: Result<(), anyhow::Error> = query_fastq.par_iter().with_max_len(1).try_for_each_with((fr, missing_reads), |(fr, missing_reads), file| {
+    let result: Result<(), anyhow::Error> = query_fastq.par_iter().enumerate().with_max_len(1).
+        try_for_each_with((fr, missing_reads), 
+        |(fr, missing_reads), (i, file)| 
+    {
         let c = counter.inc();
-        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss as u64 * bytes_per_page as u64;
+        let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss * bytes_per_page;
         eprintln!("Processing file {file} ({c}/{query_fastq_length}), memory usage={memusage}", 
             c=c+1,
             query_fastq_length=query_fastq.len(), 
-            memusage=Byte::from_bytes(mem_usage_bytes as u128).get_appropriate_unit(false).to_string());
+            memusage=Byte::from_bytes(mem_usage_bytes.try_into()?).get_appropriate_unit(false).to_string());
 
         let br: Box<dyn Read> = if file.ends_with(".gz") {
             Box::new(MultiGzDecoder::new(BufReader::new(File::open(file)?)))
@@ -160,46 +147,58 @@ fn main() -> Result<()> {
         };
         let mut reader = fastq::Reader::new(br);
 
-        let mut fileidxset2count = BTreeMap::<SortedSet<u32>,usize>::new();
+        let mut category2count = BTreeMap::<String,usize>::new();
         let mut record = fastq::Record::new();
         let mut record_num = 0usize;
         record_num += 1;
+        let mut read_count = 0usize;
         while let Err(e) = reader.read(&mut record) { 
             eprintln!("Could not parse fastq file {file} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
             record_num += 1;
         }
         while !record.is_empty() {
-            // filter out low complexity reads
-            // if record.seq().len() >= 64 {
-            //     let mut found_good_sequence = false;
-            //     for offset in 0..(record.seq().len() / 50) {
-            //         let subseq = &record.seq()[(offset*50)..std::cmp::min(((offset+1)*50)+50, record.seq().len())];
-            //         if subseq.len() >= 64 {
-            //             let kmers = rank.qgrams(k, subseq)
-            //                 .collect::<FnvHashSet<usize>>()
-            //                 .len();
-            //             let sequence_complexity = kmers as f64 / subseq.len() as f64;
-            //             if sequence_complexity >= threshold { 
-            //                 found_good_sequence = true;
-            //                 break 
-            //             }
-            //         }
-            //     }
-            //     if !found_good_sequence { continue }
-            // }
-
             let mut seed = Sha1::new();
             seed.update(record.seq());
             let bytes  = seed.finalize();
             match seqsha2fileidxset.get(&bytes) {
                 Some(fileidxset) => {
-                    match fileidxset2count.get_mut(&*fileidxset) {
-                        Some(count) => *count += 1,
-                        _ => {
-                            fileidxset2count.insert((*fileidxset).clone(), 1usize);
-                            ()
-                        },
-                    };
+                    let mut expected = Vec::<String>::new();
+                    let mut unexpected = Vec::<String>::new();
+                    for j in fileidxset.iter() {
+                        if let Some(cat) = file2category.get(&(*j as usize)) {
+                            if let Some(exp) = expected_category.get(&i) {
+                                if exp.contains(&*cat) {
+                                    expected.push(cat.to_string());
+                                }
+                                else {
+                                    unexpected.push(cat.to_string());
+                                }
+                            }
+                            else {
+                                unexpected.push(cat.to_string());
+                            }
+                        }
+                        else {
+                            match category2count.get_mut("") {
+                                Some(c2c) => *c2c += 1,
+                                None => { category2count.insert("".to_string(), 1); },
+                            }
+                        }
+                    }
+                    if !expected.is_empty() {
+                        let selected = expected.choose_multiple(&mut rand::thread_rng(), 1).collect::<Vec<&String>>()[0];
+                        match category2count.get_mut(selected.as_str()) {
+                            Some(c2c) => *c2c += 1,
+                            None => { category2count.insert(selected.to_string(), 1); }
+                        }
+                    }
+                    else if !unexpected.is_empty() {
+                        let selected = unexpected.choose_multiple(&mut rand::thread_rng(), 1).collect::<Vec<&String>>()[0];
+                        match category2count.get_mut(selected.as_str()) {
+                            Some(c2c) => *c2c += 1,
+                            None => { category2count.insert(selected.to_string(), 1); }
+                        }
+                    }
                 },
                 None => {
                     let id = record.id();
@@ -209,22 +208,22 @@ fn main() -> Result<()> {
                 }
             }
             record_num += 1;
+            read_count += 1;
             while let Err(e) = reader.read(&mut record) { 
                 eprintln!("Could not parse fastq file {file} at record {record_num}, line {record_line}: {e:?}", record_line=record_num*4);
                 record_num += 1;
             }
         }
-        for (fileidxset, count) in fileidxset2count.iter() {
-            let mut files = Vec::new();
-            for i in fileidxset.iter() {
-                files.push(to_index_fastq[*i as usize].clone());
-            }
-            let mut file_wtr = WriterBuilder::new().from_writer(vec![]);
-            file_wtr.write_record(files)?;
-            let files_str= String::from_utf8(file_wtr.into_inner()?)?;
-            let mut fr = fr.lock().or_else(|_| bail!("Could not write to found_reads file {f}!", f=args[3]))?;
-            (*fr).write_record([file, files_str.trim_end_matches(['\r','\n']), &count.to_string()])?
+        let mut summary = vec![];
+        for (category, count) in category2count.iter() {
+            let category = if category == "" { "other" } else { category };
+            summary.push(format!("{category} ({count}/{read_count}, {pct:0.2}%)", pct=(*count as f64 / read_count as f64)*100.0));
         }
+        let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
+        file_wtr.write_record(summary)?;
+        let files_str= String::from_utf8(file_wtr.into_inner()?)?;
+        let mut fr = fr.lock().or_else(|_| bail!("Could not write to found_reads file {f}!", f=args[3]))?;
+        (*fr).write_record([file, files_str.trim_end_matches(['\r','\n'])])?;
         Ok(())
     });
     result?;

@@ -849,6 +849,7 @@ dependencies = [
  "generic-array",
  "num_cpus",
  "procfs",
+ "rand",
  "rayon",
  "sha1",
  "sha2",
