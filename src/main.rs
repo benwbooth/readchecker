@@ -25,7 +25,7 @@ use rand::seq::SliceRandom;
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 5 {
-        eprintln!("Usage: {} to_index_fastq_files.tsv query_fastq_files.tsv found_reads_out.tsv missing_reads_out.fastq", args[0]);
+        eprintln!("Usage: {} to_index_fastq_files.tsv query_fastq_files.tsv found_reads_out.tsv uncategorized_reads_out.tsv missing_reads_out.fastq", args[0]);
         std::process::exit(1);
     }
     let found_reads = File::create(&args[3])?;
@@ -34,7 +34,13 @@ fn main() -> Result<()> {
         has_headers(false).
         from_writer(found_reads)));
 
-    let missing_reads = Arc::new(Mutex::new(fastq::Writer::to_file(&args[4])?));
+    let uncategorized_reads = File::create(&args[4])?;
+    let ur = Arc::new(Mutex::new(csv::WriterBuilder::new().
+        delimiter(b'\t').
+        has_headers(false).
+        from_writer(uncategorized_reads)));
+
+    let missing_reads = Arc::new(Mutex::new(fastq::Writer::to_file(&args[5])?));
 
     let threads = match std::env::var("THREADS") {
         Ok(t) => t.parse::<usize>()?,
@@ -130,8 +136,8 @@ fn main() -> Result<()> {
     }
     let counter = RelaxedCounter::new(0usize);
     let result: Result<(), anyhow::Error> = query_fastq.par_iter().enumerate().with_max_len(1).
-        try_for_each_with((fr, missing_reads), 
-        |(fr, missing_reads), (i, file)| 
+        try_for_each_with((fr, ur, missing_reads), 
+        |(fr, ur, missing_reads), (i, file)| 
     {
         let c = counter.inc();
         let mem_usage_bytes = procfs::process::Process::myself()?.stat()?.rss * bytes_per_page;
@@ -197,11 +203,14 @@ fn main() -> Result<()> {
                         let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
                         file_wtr.write_record(fileidxset.iter().map(|idx| to_index_fastq[*idx as usize].to_string()).collect::<Vec<_>>())?;
                         let files_str= String::from_utf8(file_wtr.into_inner()?)?;
-                        eprintln!("Read {read_id} matches uncategorized file(s): {files_str}", read_id=record.id());
                         match category2count.get_mut("") {
                             Some(c2c) => *c2c += 1,
                             None => { category2count.insert("".to_string(), 1); },
                         }
+                        eprintln!("Read {read_id} matches uncategorized file(s): {files_str}", read_id=record.id());
+
+                        let mut ur = ur.lock().or_else(|_| bail!("Could not write to uncategorized_reads file {f}!", f=args[4]))?;
+                        (*ur).write_record([file, record.id(), files_str.trim_end_matches(['\r','\n'])])?;
                     }
                 },
                 None => {
