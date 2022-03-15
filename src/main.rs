@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     for (i, record) in to_index_fastq_reader.records().enumerate() {
         let record = record?;
         let file = &record[0];
-        let category= if record.len() > 1 { &record[1] } else { "" };
+        let category= if record.len() > 1 { &record[1] } else { "other" };
         to_index_fastq.push(file.to_string());
         file2category.insert(i, category.to_string());
     }
@@ -203,9 +203,9 @@ fn main() -> Result<()> {
                         let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
                         file_wtr.write_record(fileidxset.iter().map(|idx| to_index_fastq[*idx as usize].to_string()).collect::<Vec<_>>())?;
                         let files_str= String::from_utf8(file_wtr.into_inner()?)?;
-                        match category2count.get_mut("") {
+                        match category2count.get_mut("other") {
                             Some(c2c) => *c2c += 1,
-                            None => { category2count.insert("".to_string(), 1); },
+                            None => { category2count.insert("other".to_string(), 1); },
                         }
                         eprintln!("Read {read_id} matches uncategorized file(s): {files_str}", read_id=record.id());
 
@@ -216,6 +216,10 @@ fn main() -> Result<()> {
                 None => {
                     let id = record.id();
                     eprintln!("{file}: read {id} not found in index");
+                    match category2count.get_mut("missing") {
+                        Some(c2c) => *c2c += 1,
+                        None => { category2count.insert("missing".to_string(), 1); },
+                    }
                     let mut mr = missing_reads.lock().or_else(|_| bail!("Could not write to missing_reads file {f}!", f=args[4]))?;
                     (*mr).write_record(&record)?;
                 }
@@ -229,7 +233,6 @@ fn main() -> Result<()> {
         }
         let mut summary = vec![];
         for (category, count) in category2count.iter() {
-            let category = if category == "" { "other" } else { category };
             summary.push(format!("{category} ({count}/{read_count}, {pct:0.2}%)", pct=(*count as f64 / read_count as f64)*100.0));
         }
         let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
