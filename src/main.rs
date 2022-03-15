@@ -24,7 +24,7 @@ use rand::seq::SliceRandom;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 5 {
+    if args.len() != 6 {
         eprintln!("Usage: {} to_index_fastq_files.tsv query_fastq_files.tsv found_reads_out.tsv uncategorized_reads_out.tsv missing_reads_out.fastq", args[0]);
         std::process::exit(1);
     }
