@@ -235,11 +235,8 @@ fn main() -> Result<()> {
         for (category, count) in category2count.iter() {
             summary.push(format!("{category} ({count}/{read_count}, {pct:0.2}%)", pct=(*count as f64 / read_count as f64)*100.0));
         }
-        let mut file_wtr = csv::WriterBuilder::new().from_writer(vec![]);
-        file_wtr.write_record(summary)?;
-        let files_str= String::from_utf8(file_wtr.into_inner()?)?;
         let mut fr = fr.lock().or_else(|_| bail!("Could not write to found_reads file {f}!", f=args[3]))?;
-        (*fr).write_record([file, files_str.trim_end_matches(['\r','\n'])])?;
+        (*fr).write_record([file, &summary.join("\n")])?;
         Ok(())
     });
     result?;
