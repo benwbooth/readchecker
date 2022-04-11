@@ -85,6 +85,7 @@ fn main() -> Result<()> {
         while !record.is_empty() {
             let mut seed = Sha1::new();
             seed.update(record.seq());
+            seed.update(record.qual());
             let bytes  = seed.finalize();
             match seqsha2fileidxset.get_mut(&bytes) {
                 Some(mut fileidxset) => {
@@ -165,6 +166,7 @@ fn main() -> Result<()> {
         while !record.is_empty() {
             let mut seed = Sha1::new();
             seed.update(record.seq());
+            seed.update(record.qual());
             let bytes  = seed.finalize();
             match seqsha2fileidxset.get(&bytes) {
                 Some(fileidxset) => {
@@ -233,6 +235,7 @@ fn main() -> Result<()> {
         }
         let mut summary = vec![];
         for (category, count) in category2count.iter() {
+            let category = if category == "" { "other" } else { category };
             summary.push(format!("{category} ({count}/{read_count}, {pct:0.2}%)", pct=(*count as f64 / read_count as f64)*100.0));
         }
         let mut fr = fr.lock().or_else(|_| bail!("Could not write to found_reads file {f}!", f=args[3]))?;
